@@ -1,7 +1,8 @@
 pub extern crate nom;
+
 use crate::{
-    ClientRegistrationRequest, ClientSendMessage, HeartBeatRequest, HeartBeatSend, Packet,
-    ServerBroadcastMessage, ServerRegistrationConfirmation,
+    ClientRegistrationEnd, ClientRegistrationRequest, ClientSendMessage, HeartBeatRequest,
+    HeartBeatSend, Packet, ServerBroadcastMessage, ServerRegistrationConfirmation,
 };
 use nom::bytes::complete as bytes;
 use nom::IResult;
@@ -32,7 +33,7 @@ macro_rules! packet_def {
         }
 impl<'a> FromBytes<'a> for Packet<'a> {
     fn from_bytes(input: &'a [u8]) -> IResult<&'a [u8], Packet<'a>, ParserError> {
-        let (input, tag) =
+        let (_, tag) =
             bytes::take(3usize)(input).map_err(|_: nom::Err<nom::error::Error<_>>| {
                 nom::Err::Failure(ParserError::InvalidTag)
             })?;
@@ -51,7 +52,8 @@ impl<'a> FromBytes<'a> for Packet<'a> {
                 HeartBeatSend,
                 HeartBeatRequest,
                 ServerBroadcastMessage,
-                ServerRegistrationConfirmation
+                ServerRegistrationConfirmation,
+                ClientRegistrationEnd
             )
         )?;
 
@@ -61,6 +63,9 @@ impl<'a> FromBytes<'a> for Packet<'a> {
 
 impl<'a> FromBytes<'a> for ClientRegistrationRequest<'a> {
     fn from_bytes(input: &'a [u8]) -> IResult<&'a [u8], Self, ParserError> {
+        let (input, _) = nom::bytes::complete::tag(&Self::IDENTIFIER)(input).map_err(
+            |_: nom::Err<nom::error::Error<_>>| nom::Err::Failure(ParserError::InvalidTag),
+        )?;
         let (input, username_len) =
             nom::number::complete::be_u8(input).map_err(|_: nom::Err<nom::error::Error<_>>| {
                 nom::Err::Failure(ParserError::MissingData)
@@ -81,14 +86,33 @@ impl<'a> FromBytes<'a> for ClientRegistrationRequest<'a> {
         ))
     }
 }
-
-impl<'a> FromBytes<'a> for ClientSendMessage<'a> {
+impl<'a> FromBytes<'a> for ClientRegistrationEnd {
     fn from_bytes(input: &'a [u8]) -> IResult<&'a [u8], Self, ParserError> {
+        let (input, _) = nom::bytes::complete::tag(&Self::IDENTIFIER)(input).map_err(
+            |_: nom::Err<nom::error::Error<_>>| nom::Err::Failure(ParserError::InvalidTag),
+        )?;
         let (input, client_id) =
             nom::number::complete::be_u32(input).map_err(|_: nom::Err<nom::error::Error<_>>| {
                 nom::Err::Failure(ParserError::MissingData)
             })?;
-        let (input, solved) =
+        let (input, magic) =
+            nom::number::complete::be_u32(input).map_err(|_: nom::Err<nom::error::Error<_>>| {
+                nom::Err::Failure(ParserError::MissingData)
+            })?;
+        Ok((input, ClientRegistrationEnd { client_id, magic }))
+    }
+}
+
+impl<'a> FromBytes<'a> for ClientSendMessage<'a> {
+    fn from_bytes(input: &'a [u8]) -> IResult<&'a [u8], Self, ParserError> {
+        let (input, _) = nom::bytes::complete::tag(&Self::IDENTIFIER)(input).map_err(
+            |_: nom::Err<nom::error::Error<_>>| nom::Err::Failure(ParserError::InvalidTag),
+        )?;
+        let (input, client_id) =
+            nom::number::complete::be_u32(input).map_err(|_: nom::Err<nom::error::Error<_>>| {
+                nom::Err::Failure(ParserError::MissingData)
+            })?;
+        let (input, magic) =
             nom::number::complete::be_u32(input).map_err(|_: nom::Err<nom::error::Error<_>>| {
                 nom::Err::Failure(ParserError::MissingData)
             })?;
@@ -107,7 +131,7 @@ impl<'a> FromBytes<'a> for ClientSendMessage<'a> {
             input,
             ClientSendMessage {
                 client_id,
-                solved,
+                magic,
                 message_len,
                 message,
             },
@@ -116,33 +140,34 @@ impl<'a> FromBytes<'a> for ClientSendMessage<'a> {
 }
 impl<'a> FromBytes<'a> for HeartBeatSend {
     fn from_bytes(input: &'a [u8]) -> IResult<&'a [u8], Self, ParserError> {
+        let (input, _) = nom::bytes::complete::tag(&Self::IDENTIFIER)(input).map_err(
+            |_: nom::Err<nom::error::Error<_>>| nom::Err::Failure(ParserError::InvalidTag),
+        )?;
         let (input, client_id) =
             nom::number::complete::be_u32(input).map_err(|_: nom::Err<nom::error::Error<_>>| {
                 nom::Err::Failure(ParserError::MissingData)
             })?;
-        let (input, solved) =
+        let (input, magic) =
             nom::number::complete::be_u32(input).map_err(|_: nom::Err<nom::error::Error<_>>| {
                 nom::Err::Failure(ParserError::MissingData)
             })?;
-        Ok((input, HeartBeatSend { client_id, solved }))
+        Ok((input, HeartBeatSend { client_id, magic }))
     }
 }
 
 impl<'a> FromBytes<'a> for HeartBeatRequest {
     fn from_bytes(input: &'a [u8]) -> IResult<&'a [u8], Self, ParserError> {
-        let (input, new_magic) =
-            nom::number::complete::be_u32(input).map_err(|_: nom::Err<nom::error::Error<_>>| {
-                nom::Err::Failure(ParserError::MissingData)
-            })?;
-        Ok((input, HeartBeatRequest { new_magic }))
+        let (input, _) = nom::bytes::complete::tag(&Self::IDENTIFIER)(input).map_err(
+            |_: nom::Err<nom::error::Error<_>>| nom::Err::Failure(ParserError::InvalidTag),
+        )?;
+        Ok((input, HeartBeatRequest {}))
     }
 }
 impl<'a> FromBytes<'a> for ServerBroadcastMessage<'a> {
     fn from_bytes(input: &'a [u8]) -> IResult<&'a [u8], Self, ParserError> {
-        let (input, new_magic) =
-            nom::number::complete::be_u32(input).map_err(|_: nom::Err<nom::error::Error<_>>| {
-                nom::Err::Failure(ParserError::MissingData)
-            })?;
+        let (input, _) = nom::bytes::complete::tag(&Self::IDENTIFIER)(input).map_err(
+            |_: nom::Err<nom::error::Error<_>>| nom::Err::Failure(ParserError::InvalidTag),
+        )?;
 
         let (input, user_id) =
             nom::number::complete::be_u32(input).map_err(|_: nom::Err<nom::error::Error<_>>| {
@@ -171,7 +196,6 @@ impl<'a> FromBytes<'a> for ServerBroadcastMessage<'a> {
         Ok((
             input,
             ServerBroadcastMessage {
-                new_magic,
                 user_id,
                 username_len,
                 username,
@@ -184,6 +208,9 @@ impl<'a> FromBytes<'a> for ServerBroadcastMessage<'a> {
 
 impl<'a> FromBytes<'a> for ServerRegistrationConfirmation {
     fn from_bytes(input: &'a [u8]) -> IResult<&'a [u8], Self, ParserError> {
+        let (input, _) = nom::bytes::complete::tag(&Self::IDENTIFIER)(input).map_err(
+            |_: nom::Err<nom::error::Error<_>>| nom::Err::Failure(ParserError::InvalidTag),
+        )?;
         let (input, client_id) =
             nom::number::complete::be_u32(input).map_err(|_: nom::Err<nom::error::Error<_>>| {
                 nom::Err::Failure(ParserError::MissingData)
